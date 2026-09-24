@@ -135,7 +135,10 @@ def procesar_caso(disc: dict, catalogos: dict, con, max_reintentos: int = 2) -> 
         sub = catalogos["legalSubMatters"].get(str(disc.get("legalSubMatterId")))
         materia = catalogos["legalMatters"].get(str(sub["legalMatterId"])) if sub else None
         estado = "terminada" if disc.get("endedAt") else "en_tramitacion"
-        anio = int(str(disc.get("presentationDate") or "")[:4]) if disc.get("presentationDate") else None
+        # presentationDate falta en casos antiguos -- createdAt siempre está
+        # y es prácticamente la misma fecha (se ve en los datos reales)
+        fecha_para_anio = disc.get("presentationDate") or disc.get("createdAt")
+        anio = int(str(fecha_para_anio)[:4]) if fecha_para_anio else None
         con.execute(
             """INSERT INTO discrepancias
                (api_id, numero, anio, nombre, materia, submateria, estado,

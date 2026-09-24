@@ -22,13 +22,14 @@ SISTEMA = (
     "incluí siempre su link (el campo 'link' que devuelven las herramientas) para que "
     "la persona lo abra por su cuenta.\n\n"
     "Tenés tres herramientas:\n"
-    "1) buscar_discrepancias: para encontrar CASOS por requirente, contraparte, materia, "
-    "año o estado (abierta/cerrada).\n"
+    "1) buscar_discrepancias: para encontrar CASOS por empresa involucrada, materia, "
+    "submateria, año o estado (en_tramitacion/terminada). Un caso puede tener más de una "
+    "empresa por lado (discrepante o interesada) -- cada resultado trae la lista completa.\n"
     "2) buscar_en_documentos: para encontrar en qué discrepancia se dijo o pidió algo "
     "puntual, buscando dentro del CONTENIDO de los escritos/dictámenes, no solo el "
     "nombre del caso.\n"
     "3) obtener_documento_completo: para leer el texto ÍNTEGRO de un documento puntual "
-    "(por su file_id) cuando el extracto no alcance -- cifras exactas, argumentos "
+    "(por su documento_id) cuando el extracto no alcance -- cifras exactas, argumentos "
     "técnicos, el resultado final del dictamen."
 )
 

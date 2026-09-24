@@ -20,7 +20,8 @@ DB_PATH = configuracion.RAIZ_DATOS / "discrepancias.sqlite"
 ESQUEMA = """
 CREATE TABLE IF NOT EXISTS discrepancias (
     id                  INTEGER PRIMARY KEY,
-    api_id              INTEGER UNIQUE,   -- id en discrepancias.panelexpertos.cl
+    api_id              INTEGER UNIQUE,   -- id en discrepancias.panelexpertos.cl (solo 2022+)
+    folder_id           TEXT UNIQUE,      -- id de carpeta OneDrive (solo histórico 2004-2021, ver scraper_panel_historico.py)
     numero              INTEGER,          -- ej 23 (dentro del año)
     anio                INTEGER,
     nombre              TEXT,             -- "cover" tal cual lo escribe el Panel
@@ -58,7 +59,8 @@ CREATE INDEX IF NOT EXISTS idx_disc_emp_disc ON discrepancia_empresas(discrepanc
 CREATE TABLE IF NOT EXISTS documentos (
     id                INTEGER PRIMARY KEY,
     discrepancia_id   INTEGER REFERENCES discrepancias(id),
-    api_id            INTEGER UNIQUE,   -- documents.id de la API
+    api_id            INTEGER UNIQUE,   -- documents.id de la API (solo 2022+)
+    file_id           TEXT UNIQUE,      -- id de archivo OneDrive (solo histórico 2004-2021)
     attachment_api_id INTEGER,          -- attachments.id del adjunto "principal" (para regenerar el link al vuelo)
     titulo            TEXT,
     tipo              TEXT,             -- documentTypes.name real (catálogo de 13 tipos)
@@ -105,6 +107,22 @@ END;
 """
 
 
+def _columnas(con, tabla: str) -> set[str]:
+    return {fila[1] for fila in con.execute(f"PRAGMA table_info({tabla})").fetchall()}
+
+
+def _migrar_columnas_historico(con) -> None:
+    """Agrega folder_id/file_id si la base ya existía de antes (creada sin
+    esas columnas) -- no destructivo, no pisa nada de lo ya cargado."""
+    if "folder_id" not in _columnas(con, "discrepancias"):
+        con.execute("ALTER TABLE discrepancias ADD COLUMN folder_id TEXT")
+        con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_discrepancias_folder_id ON discrepancias(folder_id)")
+    if "file_id" not in _columnas(con, "documentos"):
+        con.execute("ALTER TABLE documentos ADD COLUMN file_id TEXT")
+        con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_documentos_file_id ON documentos(file_id)")
+    con.commit()
+
+
 def armar() -> None:
     import sqlite3
 
@@ -113,6 +131,7 @@ def armar() -> None:
     try:
         con.executescript(ESQUEMA)
         con.commit()
+        _migrar_columnas_historico(con)
     finally:
         con.close()
     print(f"Base lista: {DB_PATH}")

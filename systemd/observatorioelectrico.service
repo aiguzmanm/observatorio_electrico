@@ -1,0 +1,23 @@
+[Unit]
+Description=observatorio_electrico -- bot de Telegram de consulta del Panel de Expertos
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/observatorio_electrico
+ExecStart=/home/ubuntu/observatorio_electrico/.venv/bin/python bot.py
+Restart=always
+RestartSec=10
+Environment=TZ=America/Santiago
+Environment=PYTHONUNBUFFERED=1
+MemoryAccounting=true
+MemoryHigh=500M
+MemoryMax=700M
+MemorySwapMax=0
+TasksMax=64
+OOMPolicy=stop
+
+[Install]
+WantedBy=multi-user.target

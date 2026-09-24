@@ -1,0 +1,18 @@
+[rutas]
+# Carpeta raíz donde se guarda la base local, relativa a la raíz del proyecto.
+datos = datos
+
+[telegram]
+# Token de @BotFather y chat_id de destino.
+token =
+chat_id =
+
+[ia]
+# Mismo esquema que correspondencia_cen: DeepSeek primario, Gemini de
+# respaldo si falla.
+proveedor_primario = deepseek
+modelo_primario =
+api_key_deepseek =
+proveedor_secundario = gemini
+modelo_secundario =
+api_key_gemini =

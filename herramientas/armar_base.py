@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-armar_base.py — crea datos/discrepancias.sqlite (si no existe) con el
-esquema de dos tablas: discrepancias (el caso) y documentos (cada escrito/
-acta/dictamen, texto completo, ligado por FK). FTS5 sobre documentos.
+armar_base.py -- crea datos/discrepancias.sqlite con el esquema basado en la
+API real de discrepancias.panelexpertos.cl (ver adquisicion/scraper_panel_api.py).
 
-No guarda PDF/PPT -- solo texto extraído. Mismo patrón que
-correspondencia_cen/herramientas/cargar_sqlite.py.
+Reemplaza el esquema anterior (basado en scrapear carpetas de OneDrive): ahora
+la fuente es la API propia del Panel, que entrega metadata estructurada real
+(estado, materia/submateria, empresas por caso con su rol) en vez de tener que
+adivinarla con regex sobre nombres de carpeta.
+
+No guarda PDF/PPT/DOCX -- solo texto extraído. Mismo principio que siempre.
 """
 from __future__ import annotations
 
@@ -16,68 +19,88 @@ DB_PATH = configuracion.RAIZ_DATOS / "discrepancias.sqlite"
 
 ESQUEMA = """
 CREATE TABLE IF NOT EXISTS discrepancias (
-    id              INTEGER PRIMARY KEY,
-    folder_id       TEXT UNIQUE,   -- id de OneDrive de la carpeta del caso
-    numero          TEXT,          -- ej "04-2026"
-    anio            INTEGER,
-    nombre_completo TEXT,          -- nombre de la carpeta tal cual aparece en el sitio
-    requirente      TEXT,          -- mejor esfuerzo, parseado del nombre; puede quedar NULL
-    contraparte     TEXT,
-    materia         TEXT,
-    estado          TEXT,          -- 'en_curso' | 'tramitada'
-    fecha_ingesta   TEXT
+    id                  INTEGER PRIMARY KEY,
+    api_id              INTEGER UNIQUE,   -- id en discrepancias.panelexpertos.cl
+    numero              INTEGER,          -- ej 23 (dentro del año)
+    anio                INTEGER,
+    nombre              TEXT,             -- "cover" tal cual lo escribe el Panel
+    materia             TEXT,             -- legalMatters.name (catálogo real)
+    submateria          TEXT,             -- legalSubMatters.name (catálogo real)
+    estado              TEXT,             -- 'en_tramitacion' | 'terminada'
+    motivo_cierre       TEXT,             -- 'dictamen' | 'desistimiento' | NULL (abierta o no detectado)
+    fecha_presentacion  TEXT,
+    fecha_termino       TEXT,             -- endedAt, NULL si sigue abierta
+    link_pagina         TEXT,             -- link estable a la ficha del caso (no expira)
+    fecha_ingesta       TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_discrepancias_anio ON discrepancias(anio);
 CREATE INDEX IF NOT EXISTS idx_discrepancias_estado ON discrepancias(estado);
 
+CREATE TABLE IF NOT EXISTS empresas (
+    id       INTEGER PRIMARY KEY,
+    api_id   INTEGER UNIQUE,   -- entities.id de la API
+    nombre   TEXT,
+    rut      TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_empresas_nombre ON empresas(nombre);
+
+-- Muchos-a-muchos: una discrepancia puede tener más de una empresa por
+-- lado (ej. varias interesadas), y una empresa aparece en muchos casos.
+CREATE TABLE IF NOT EXISTS discrepancia_empresas (
+    discrepancia_id INTEGER REFERENCES discrepancias(id),
+    empresa_id      INTEGER REFERENCES empresas(id),
+    rol             TEXT,   -- 'discrepante' | 'interesado'
+    PRIMARY KEY (discrepancia_id, empresa_id, rol)
+);
+CREATE INDEX IF NOT EXISTS idx_disc_emp_empresa ON discrepancia_empresas(empresa_id);
+CREATE INDEX IF NOT EXISTS idx_disc_emp_disc ON discrepancia_empresas(discrepancia_id);
+
 CREATE TABLE IF NOT EXISTS documentos (
     id                INTEGER PRIMARY KEY,
     discrepancia_id   INTEGER REFERENCES discrepancias(id),
-    file_id           TEXT UNIQUE,  -- id de OneDrive del archivo
-    nombre            TEXT,
-    categoria         TEXT,         -- 'escrito' | 'acta' | 'actuacion' | 'dictamen' | 'otro'
+    api_id            INTEGER UNIQUE,   -- documents.id de la API
+    attachment_api_id INTEGER,          -- attachments.id del adjunto "principal" (para regenerar el link al vuelo)
+    titulo            TEXT,
+    tipo              TEXT,             -- documentTypes.name real (catálogo de 13 tipos)
+    fecha             TEXT,             -- publishedAt/confirmedAt
     texto             TEXT,
-    link_descarga     TEXT,         -- URL reconstruible (admin-ajax.php?action=shareonedrive-download...)
     fecha_ingesta     TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_documentos_discrepancia ON documentos(discrepancia_id);
-CREATE INDEX IF NOT EXISTS idx_documentos_categoria ON documentos(categoria);
+CREATE INDEX IF NOT EXISTS idx_documentos_tipo ON documentos(tipo);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS documentos_fts USING fts5(
-    nombre, texto,
+    titulo, texto,
     content='documentos', content_rowid='id'
 );
-
 CREATE TRIGGER IF NOT EXISTS documentos_ai AFTER INSERT ON documentos BEGIN
-    INSERT INTO documentos_fts(rowid, nombre, texto) VALUES (new.id, new.nombre, new.texto);
+    INSERT INTO documentos_fts(rowid, titulo, texto) VALUES (new.id, new.titulo, new.texto);
 END;
 CREATE TRIGGER IF NOT EXISTS documentos_ad AFTER DELETE ON documentos BEGIN
-    INSERT INTO documentos_fts(documentos_fts, rowid, nombre, texto) VALUES ('delete', old.id, old.nombre, old.texto);
+    INSERT INTO documentos_fts(documentos_fts, rowid, titulo, texto) VALUES ('delete', old.id, old.titulo, old.texto);
 END;
 CREATE TRIGGER IF NOT EXISTS documentos_au AFTER UPDATE ON documentos BEGIN
-    INSERT INTO documentos_fts(documentos_fts, rowid, nombre, texto) VALUES ('delete', old.id, old.nombre, old.texto);
-    INSERT INTO documentos_fts(rowid, nombre, texto) VALUES (new.id, new.nombre, new.texto);
+    INSERT INTO documentos_fts(documentos_fts, rowid, titulo, texto) VALUES ('delete', old.id, old.titulo, old.texto);
+    INSERT INTO documentos_fts(rowid, titulo, texto) VALUES (new.id, new.titulo, new.texto);
 END;
 
--- FTS liviano también sobre discrepancias, para encontrar casos por nombre
--- aunque el documento en sí todavía no se haya descargado.
 CREATE VIRTUAL TABLE IF NOT EXISTS discrepancias_fts USING fts5(
-    nombre_completo, requirente, contraparte, materia,
+    nombre, materia, submateria,
     content='discrepancias', content_rowid='id'
 );
 CREATE TRIGGER IF NOT EXISTS discrepancias_ai AFTER INSERT ON discrepancias BEGIN
-    INSERT INTO discrepancias_fts(rowid, nombre_completo, requirente, contraparte, materia)
-    VALUES (new.id, new.nombre_completo, new.requirente, new.contraparte, new.materia);
+    INSERT INTO discrepancias_fts(rowid, nombre, materia, submateria)
+    VALUES (new.id, new.nombre, new.materia, new.submateria);
 END;
 CREATE TRIGGER IF NOT EXISTS discrepancias_ad AFTER DELETE ON discrepancias BEGIN
-    INSERT INTO discrepancias_fts(discrepancias_fts, rowid, nombre_completo, requirente, contraparte, materia)
-    VALUES ('delete', old.id, old.nombre_completo, old.requirente, old.contraparte, old.materia);
+    INSERT INTO discrepancias_fts(discrepancias_fts, rowid, nombre, materia, submateria)
+    VALUES ('delete', old.id, old.nombre, old.materia, old.submateria);
 END;
 CREATE TRIGGER IF NOT EXISTS discrepancias_au AFTER UPDATE ON discrepancias BEGIN
-    INSERT INTO discrepancias_fts(discrepancias_fts, rowid, nombre_completo, requirente, contraparte, materia)
-    VALUES ('delete', old.id, old.nombre_completo, old.requirente, old.contraparte, old.materia);
-    INSERT INTO discrepancias_fts(rowid, nombre_completo, requirente, contraparte, materia)
-    VALUES (new.id, new.nombre_completo, new.requirente, new.contraparte, new.materia);
+    INSERT INTO discrepancias_fts(discrepancias_fts, rowid, nombre, materia, submateria)
+    VALUES ('delete', old.id, old.nombre, old.materia, old.submateria);
+    INSERT INTO discrepancias_fts(rowid, nombre, materia, submateria)
+    VALUES (new.id, new.nombre, new.materia, new.submateria);
 END;
 """
 

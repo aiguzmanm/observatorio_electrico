@@ -130,7 +130,7 @@ def buscar_en_documentos(texto: str, limite: int = 8) -> dict:
         filas = con.execute(
             """
             SELECT doc.file_id, doc.nombre, doc.categoria, d.numero, d.requirente, d.contraparte,
-                   substr(doc.texto, 1, 400) AS extracto
+                   doc.link_descarga, substr(doc.texto, 1, 400) AS extracto
             FROM documentos_fts
             JOIN documentos doc ON doc.id = documentos_fts.rowid
             JOIN discrepancias d ON d.id = doc.discrepancia_id
@@ -140,7 +140,7 @@ def buscar_en_documentos(texto: str, limite: int = 8) -> dict:
             """,
             (texto, limite),
         ).fetchall()
-        nombres = ["file_id", "nombre_documento", "categoria", "numero_discrepancia", "requirente", "contraparte", "extracto"]
+        nombres = ["file_id", "nombre_documento", "categoria", "numero_discrepancia", "requirente", "contraparte", "link", "extracto"]
         return {"total": len(filas), "resultados": [dict(zip(nombres, f)) for f in filas]}
     except sqlite3.OperationalError as e:
         return {"error": f"Búsqueda inválida ({e})."}

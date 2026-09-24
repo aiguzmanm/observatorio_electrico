@@ -1,0 +1,25 @@
+# Credenciales / configuración local (nunca versionar)
+*.ini
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+
+# Datos: base local, backfill, logs — no versionar (pesan mucho y son locales)
+datos/
+logs/
+*.log
+
+# Editor / OS
+.vscode/*
+!.vscode/launch.json
+.idea/
+.DS_Store
+Thumbs.db

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturoTimeoutError
 from datetime import date
 from pathlib import Path
 from typing import Optional
@@ -53,16 +54,32 @@ CODIGO_DESISTIMIENTO = "withdrawal"
 CODIGO_DICTAMEN = "opinions"
 
 
+# El timeout de `requests` solo corta si no llega NINGÚN byte dentro de ese
+# plazo -- una conexión que gotea datos muy lento nunca lo dispara y puede
+# colgar el proceso por tiempo indefinido (visto en producción con un
+# adjunto real). Este wrapper impone un tope de tiempo real de pared.
+_EJECUTOR = ThreadPoolExecutor(max_workers=4)
+
+
+def _con_tope_de_tiempo(func, *args, segundos: int, **kwargs):
+    futuro = _EJECUTOR.submit(func, *args, **kwargs)
+    return futuro.result(timeout=segundos)
+
+
 def obtener_home() -> dict:
-    resp = requests.get(URL_HOME, headers=HEADERS, timeout=60)
-    resp.raise_for_status()
-    return resp.json()["objects"]
+    def _pedir():
+        resp = requests.get(URL_HOME, headers=HEADERS, timeout=60)
+        resp.raise_for_status()
+        return resp.json()["objects"]
+    return _con_tope_de_tiempo(_pedir, segundos=90)
 
 
 def obtener_caso(api_id: int) -> dict:
-    resp = requests.get(URL_CASO.format(id=api_id), headers=HEADERS, timeout=60)
-    resp.raise_for_status()
-    return resp.json()["objects"]
+    def _pedir():
+        resp = requests.get(URL_CASO.format(id=api_id), headers=HEADERS, timeout=60)
+        resp.raise_for_status()
+        return resp.json()["objects"]
+    return _con_tope_de_tiempo(_pedir, segundos=30)
 
 
 def nombre_entidad(entity: dict) -> str:
@@ -109,6 +126,7 @@ def _asegurar_empresa(con, api_id: int, nombre: str, rut: str) -> int:
 
 
 def procesar_caso(disc: dict, catalogos: dict, con, max_reintentos: int = 2) -> None:
+    t_inicio = time.time()
     api_id = disc["id"]
     ya = con.execute("SELECT id FROM discrepancias WHERE api_id = ?", (api_id,)).fetchone()
     if ya:
@@ -199,9 +217,14 @@ def procesar_caso(disc: dict, catalogos: dict, con, max_reintentos: int = 2) -> 
         if adjunto_principal:
             attachment_api_id = adjunto_principal["id"]
             try:
-                resp = requests.get(adjunto_principal["url"], timeout=90)
-                resp.raise_for_status()
-                texto = extraer_texto(resp.content, adjunto_principal.get("contentType", ""))
+                def _bajar():
+                    r = requests.get(adjunto_principal["url"], timeout=60)
+                    r.raise_for_status()
+                    return r.content
+                contenido = _con_tope_de_tiempo(_bajar, segundos=45)
+                texto = extraer_texto(contenido, adjunto_principal.get("contentType", ""))
+            except FuturoTimeoutError:
+                texto = "[Error: la descarga superó los 45s de tope y se abandonó]"
             except Exception as e:
                 texto = f"[Error descargando/extrayendo: {e}]"
         else:
@@ -223,6 +246,8 @@ def procesar_caso(disc: dict, catalogos: dict, con, max_reintentos: int = 2) -> 
     if motivo_cierre:
         con.execute("UPDATE discrepancias SET motivo_cierre = ? WHERE id = ?", (motivo_cierre, discrepancia_id))
         con.commit()
+
+    print(f"    ({len(documentos)} documentos, {time.time() - t_inicio:.1f}s)")
 
 
 def main() -> None:

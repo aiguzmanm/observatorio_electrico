@@ -15,6 +15,10 @@ el código que corre siempre es nuestro.
 - buscar_en_documentos: full-text sobre el CONTENIDO de escritos/dictámenes
   -- para "¿en qué discrepancia se pidió tal cosa?" cuando no se sabe el
   nombre del caso de antemano.
+- comunicados_de_caso: todos los comunicados oficiales (programa de trabajo,
+  plazos, prórrogas, abstenciones) de UN caso puntual -- más confiable que
+  buscar_en_documentos para esto, que depende de que el texto use la misma
+  palabra que la pregunta (ej. "plazo" vs "fecha").
 - obtener_documento_completo: texto ÍNTEGRO de un documento puntual (nunca
   un extracto cortado a N caracteres -- mismo aprendizaje que
   correspondencia_cen).
@@ -69,6 +73,32 @@ DECLARACIONES = [
                 "limite": {"type": "integer", "description": "Máximo de resultados, default 8."},
             },
             "required": ["texto"],
+        },
+    },
+    {
+        "name": "comunicados_de_caso",
+        "description": (
+            "Devuelve TODOS los comunicados oficiales de un caso puntual (por su número y "
+            "año): el que admite a tramitación con el programa de trabajo inicial (fecha de "
+            "audiencia pública, plazo para observaciones de partes e interesados, orden y "
+            "duración de exposiciones), y cualquier comunicado posterior (prórrogas de "
+            "plazos, solicitudes de información a la CNE u otros organismos y sus "
+            "resoluciones, abstención de integrantes del Panel, ampliación del plazo del "
+            "dictamen). Usar para CUALQUIER pregunta sobre plazos, fechas, programa de "
+            "trabajo, audiencia pública, prórrogas, abstenciones u otros aspectos "
+            "administrativos/procedimentales de un caso -- son pocos documentos por caso y "
+            "se devuelven completos, no hace falta buscar_en_documentos para esto (esa "
+            "herramienta busca por coincidencia exacta de palabras y puede no encontrar "
+            "nada aunque el dato esté, porque el texto real puede no usar la palabra exacta "
+            "de la pregunta, ej. preguntar por 'plazos' cuando el documento dice 'fechas')."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "numero": {"type": "integer", "description": "Número de la discrepancia, ej. 23."},
+                "anio": {"type": "integer", "description": "Año de la discrepancia, ej. 2026."},
+            },
+            "required": ["numero", "anio"],
         },
     },
     {
@@ -179,6 +209,33 @@ def buscar_en_documentos(texto: str, limite: int = 8) -> dict:
         con.close()
 
 
+def comunicados_de_caso(numero: int, anio: int) -> dict:
+    con = sqlite3.connect(DB)
+    try:
+        disc = con.execute(
+            "SELECT id, nombre, link_pagina FROM discrepancias WHERE numero = ? AND anio = ?",
+            (numero, anio),
+        ).fetchone()
+        if not disc:
+            return {"error": f"No encontré ninguna discrepancia {numero}-{anio}."}
+        discrepancia_id, nombre, link = disc
+        filas = con.execute(
+            """
+            SELECT titulo, tipo, fecha, texto FROM documentos
+            WHERE discrepancia_id = ? AND tipo IN ('Comunicado', 'Comunicado y pauta')
+            ORDER BY fecha
+            """,
+            (discrepancia_id,),
+        ).fetchall()
+        nombres = ["titulo", "tipo", "fecha", "texto"]
+        return {
+            "numero_discrepancia": numero, "anio": anio, "nombre_discrepancia": nombre, "link": link,
+            "total": len(filas), "comunicados": [dict(zip(nombres, f)) for f in filas],
+        }
+    finally:
+        con.close()
+
+
 def obtener_documento_completo(documento_id: int) -> dict:
     con = sqlite3.connect(DB)
     try:
@@ -201,5 +258,6 @@ def obtener_documento_completo(documento_id: int) -> dict:
 FUNCIONES = {
     "buscar_discrepancias": buscar_discrepancias,
     "buscar_en_documentos": buscar_en_documentos,
+    "comunicados_de_caso": comunicados_de_caso,
     "obtener_documento_completo": obtener_documento_completo,
 }

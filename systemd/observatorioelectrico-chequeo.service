@@ -1,0 +1,12 @@
+[Unit]
+Description=observatorio_electrico -- chequeo diario de novedades del Panel de Expertos (avisa por Telegram)
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/observatorio_electrico
+ExecStart=/home/ubuntu/observatorio_electrico/.venv/bin/python -m adquisicion.chequeo_diario
+Environment=TZ=America/Santiago
+Environment=PYTHONUNBUFFERED=1
+MemoryAccounting=true
+MemoryMax=400M

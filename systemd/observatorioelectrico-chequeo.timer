@@ -1,0 +1,10 @@
+[Unit]
+Description=Corre el chequeo diario del Panel de Expertos a las 10:00 hora de Chile
+
+[Timer]
+OnCalendar=*-*-* 10:00:00 America/Santiago
+Persistent=true
+Unit=observatorioelectrico-chequeo.service
+
+[Install]
+WantedBy=timers.target

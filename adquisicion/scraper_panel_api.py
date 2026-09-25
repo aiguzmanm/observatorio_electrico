@@ -131,6 +131,14 @@ def procesar_caso(disc: dict, catalogos: dict, con, max_reintentos: int = 2) -> 
     ya = con.execute("SELECT id FROM discrepancias WHERE api_id = ?", (api_id,)).fetchone()
     if ya:
         discrepancia_id = ya[0]
+        # el caso ya existía -- puede haber cambiado de estado desde la
+        # última vez (ej. se subió el dictamen y pasó a terminada)
+        estado_actual = "terminada" if disc.get("endedAt") else "en_tramitacion"
+        con.execute(
+            "UPDATE discrepancias SET estado = ?, fecha_termino = ? WHERE id = ?",
+            (estado_actual, disc.get("endedAt"), discrepancia_id),
+        )
+        con.commit()
     else:
         sub = catalogos["legalSubMatters"].get(str(disc.get("legalSubMatterId")))
         materia = catalogos["legalMatters"].get(str(sub["legalMatterId"])) if sub else None

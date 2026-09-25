@@ -2,10 +2,10 @@
 # -*- coding: utf-8 -*-
 """
 chequeo_diario.py -- corre una vez al día (ver systemd/observatorioelectrico-
-chequeo.timer): revisa novedades del Panel de Expertos Y de la CNE (Normas
-Técnicas/Servicios Complementarios), carga lo nuevo, y manda UN resumen por
-Telegram si hay algo -- si no hay nada en ninguna de las dos fuentes, no
-manda mensaje.
+chequeo.timer): revisa novedades del Panel de Expertos, la CNE (Normas
+Técnicas/Servicios Complementarios) y el Diario Oficial, carga lo nuevo, y
+manda UN resumen por Telegram si hay algo -- si no hay nada en ninguna de
+las tres fuentes, no manda mensaje.
 
 Panel de Expertos: pide /api/v1/home UNA vez (liviano) y compara los ids
 contra lo ya guardado -- discrepancias nuevas, documentos nuevos en
@@ -13,8 +13,14 @@ cualquier caso (nuevo o viejo), y casos que pasaron a terminada.
 
 CNE: pide /normas y /servicios (livianos también) y compara codigo_carpeta
 (resoluciones) / link (normativa vigente) contra lo ya guardado.
+
+Diario Oficial: revisa la edición electrónica del día, junta TODAS las
+publicaciones (no solo las de Energía) y le pide a la IA que catalogue
+cuáles son del sector eléctrico -- ver scraper_diario_oficial.py.
 """
 from __future__ import annotations
+
+from datetime import date
 
 import requests
 
@@ -24,6 +30,7 @@ from adquisicion.scraper_cne_normativa import (
     CATEGORIA_NORMATIVA_VIGENTE, DB_PATH as DB_CNE,
     obtener_normas, obtener_servicios, procesar_normativa_vigente, procesar_resolucion,
 )
+from adquisicion.scraper_diario_oficial import revisar_dia as revisar_diario_oficial
 
 URL_SEND_MESSAGE = f"https://api.telegram.org/bot{configuracion.TELEGRAM_TOKEN}/sendMessage"
 
@@ -143,7 +150,7 @@ def _chequear_cne() -> list[dict]:
         con.close()
 
 
-def _armar_mensaje(nuevas: list, cerrados: list, docs_nuevos: dict, novedades_cne: list) -> str:
+def _armar_mensaje(nuevas: list, cerrados: list, docs_nuevos: dict, novedades_cne: list, novedades_diario: list) -> str:
     partes = ["📋 Novedades de hoy:\n"]
 
     if nuevas:
@@ -175,18 +182,26 @@ def _armar_mensaje(nuevas: list, cerrados: list, docs_nuevos: dict, novedades_cn
                 partes.append(f"  [Normativa vigente, {n['sigla']}] {n['nombre'][:80]}")
         partes.append("")
 
+    if novedades_diario:
+        partes.append(f"📰 {len(novedades_diario)} publicación(es) del Diario Oficial de hoy (sector eléctrico, catalogadas por IA):")
+        for p in novedades_diario:
+            partes.append(f"  [{p['ministerio'][:35]}] {p['titulo'][:90]}")
+            partes.append(f"  {p['link_pdf']}")
+        partes.append("")
+
     return "\n".join(partes).strip()
 
 
 def chequear_y_avisar() -> None:
     nuevas, cerrados, docs_nuevos_info = _chequear_panel()
     novedades_cne = _chequear_cne()
+    novedades_diario = revisar_diario_oficial(date.today().strftime("%d-%m-%Y"))
 
-    if not (nuevas or cerrados or docs_nuevos_info or novedades_cne):
+    if not (nuevas or cerrados or docs_nuevos_info or novedades_cne or novedades_diario):
         print("Sin novedades en ninguna fuente.")
         return
 
-    mensaje = _armar_mensaje(nuevas, cerrados, docs_nuevos_info, novedades_cne)
+    mensaje = _armar_mensaje(nuevas, cerrados, docs_nuevos_info, novedades_cne, novedades_diario)
     print(mensaje)
     _enviar_telegram(mensaje)
 

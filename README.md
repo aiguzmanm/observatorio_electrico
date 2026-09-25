@@ -232,6 +232,47 @@ ya tramitadas. No mezclar los dos: uno cita ley, el otro cita casos reales.
   `correspondencia_cen`.
 - Casos están en dos estados: **"En curso"** y **"Tramitadas"** (cerradas).
 
+### Backfill histórico 2004-2021 -- EN CURSO (background en la VM)
+
+La API nueva (`discrepancias.panelexpertos.cl`) solo trackea casos desde
+2022 -- confirmado contra el sitio, no es una suposición. Para 2004-2021 la
+única fuente es el sitio WordPress viejo (OneDrive/`admin-ajax.php`), scrapeado
+por `adquisicion/scraper_panel_historico.py` (revive el mecanismo del
+`scraper_panel.py` original, ya obsoleto para 2022+, con dos bugs corregidos
+de paso: ahora sí baja a las subsubcarpetas de "Escritos Presentados", y
+extrae texto de `.docx` además de `.pdf`). Mete todo en la MISMA
+`discrepancias.sqlite`, identificando sus filas por `folder_id`/`file_id`
+(no `api_id`, que es de la API nueva) -- columnas nuevas, no destructivas,
+ver `herramientas/armar_base.py`. Campos que esa fuente no tiene
+(materia/submateria/empresas/fechas) quedan `NULL` a propósito, nunca
+inventados; `estado='terminada'` fijo (todo lo publicado ahí ya cerró).
+
+Se lanzó en background en la VM (`setsid nohup ... &`, mismo patrón de
+siempre) y **puede tardar 24+ horas en total** -- el sitio viejo es mucho
+más lento que la API nueva (cada documento implica varios viajes de red por
+las subcarpetas, ~100-170s por caso). Medido en vivo: 2004-2013 completo
+(161 casos) tomó ~13 horas, ritmo real ~12-13 casos/hora. Los años que
+faltan (2014-2021) tienden a tener MÁS casos que los primeros (ver
+`explorar_sitio`/muestras: 2021 solo ya tiene 27), así que el resto puede
+tomar otras 12-20 horas -- no extrapolar un ETA optimista.
+
+Es completamente seguro de interrumpir y volver a correr: cada discrepancia
+y cada documento se chequea por `folder_id`/`file_id` antes de insertar
+(`INSERT` se salta si ya existe), así que un corte de conexión o un reinicio
+de la VM no duplica nada, solo retoma donde quedó. No bloquea nada mientras
+tanto -- el bot y el chequeo diario funcionan normal con lo que ya hay
+(2022-2026 completo desde el primer día de este módulo).
+
+Para revisar el avance: `pgrep -f adquisicion.scraper_panel_historico`
+(sigue vivo?), y contra la base:
+```sql
+SELECT COUNT(*) FROM discrepancias WHERE folder_id IS NOT NULL;  -- casos históricos cargados
+SELECT anio, COUNT(*) FROM discrepancias WHERE folder_id IS NOT NULL GROUP BY anio ORDER BY anio;
+```
+Log completo en `/tmp/scraper_historico.log` en la VM (ojo: stdout queda
+bufferizado al redirigir a archivo, así que el log se ve "atrasado" respecto
+al avance real -- confiar en la cuenta contra la base, no en `tail` del log).
+
 ## Fuente: CNE (Comisión Nacional de Energía)
 
 Segundo módulo, base propia (`datos/cne.sqlite`, no comparte tablas con

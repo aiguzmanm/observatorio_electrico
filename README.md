@@ -232,6 +232,141 @@ ya tramitadas. No mezclar los dos: uno cita ley, el otro cita casos reales.
   `correspondencia_cen`.
 - Casos están en dos estados: **"En curso"** y **"Tramitadas"** (cerradas).
 
+## Fuente: CNE (Comisión Nacional de Energía)
+
+Segundo módulo, base propia (`datos/cne.sqlite`, no comparte tablas con
+`discrepancias.sqlite`). A diferencia del Panel (una sola dimensión:
+discrepancias), la CNE es un árbol de secciones, cada una con su propio
+mecanismo -- no asumir que lo que funciona para una sirve para otra.
+
+### Normas Técnicas y Servicios Complementarios -- HECHO
+
+- Fuente real: `https://apinormastecnicas.cne.cl/normas` y `/servicios` --
+  API JSON limpia sin login, detrás de un iframe en
+  `portalnormativo.cne.cl/?page_id=1577` (ese `page_id` es fijo, confirmado
+  en el propio HTML de la página, no se regenera).
+- `/normas` trae 11 categorías de resoluciones (las 10 Normas Técnicas
+  numeradas + "Informe SSCC") más una categoría aparte "Normativa vigente"
+  (esquema distinto: el texto consolidado actual + anexos, sin fechas ni
+  número de resolución). `/servicios` trae 1 categoría más, mismo esquema
+  que las resoluciones.
+- **Ningún archivo de este módulo es descargable directo** -- el 100% de
+  los links son de SharePoint interno de la CNE (`comisionenergia.sharepoint.com`).
+  Medido con Playwright real: ~1.2GB de RAM por descarga (el visor de PDF
+  de SharePoint es pesado), no viable en esta VPS de 1GB. Por eso este
+  módulo guarda solo metadata + link, nunca texto -- ver
+  `adquisicion/scraper_cne_normativa.py`.
+- Ya conectado al bot (`motor_ia/herramientas_ia_cne.py`:
+  `buscar_resoluciones_cne`, `buscar_normativa_vigente_cne`) y al chequeo
+  diario (`chequeo_diario.py` revisa `/normas` y `/servicios` cada mañana
+  junto con el Panel, un solo mensaje de Telegram si hay novedades en
+  cualquiera de las dos fuentes).
+
+### Estudios (`cne.cl/estudios/electricidad/`) -- INVESTIGADO, NO CARGADO
+
+- Página WordPress plana, sin API: 10 estudios en una lista simple, cada
+  uno con fecha de publicación y un botón "Descargar".
+- Mixto: 8 de los 10 son PDF directos en el propio `wp-content/uploads` de
+  cne.cl (fácil, mismo patrón que correspondencia_cen). Los otros 2 son
+  SharePoint (mismo problema que Normas Técnicas -- metadata solamente).
+- Falta: escribir el scraper (reutilizar `es_link_directo`/`_descargar_y_extraer`
+  de `scraper_cne_normativa.py`, la lógica ya está probada) y sumarlo al
+  bot/chequeo diario.
+
+### Tarificación (`cne.cl/tarificacion/electrica/`) -- BLOQUEADO, no insistir sin nueva pista
+
+**No es un mecanismo único.** La página principal solo lista 18
+subcategorías (Precio Nudo Corto Plazo, VAD, Costos de Falla, Cargos de
+Transmisión, Expansión de Transmisión, etc.). Cada subcategoría se
+comporta distinto -- confirmado con casos reales, no es una suposición:
+
+- **"Precio Medio de Mercado"** (subcategoría relacionada, no una de las
+  18 principales): funciona bien. Tiene un dropdown real (`<ul
+  class="dropdown-menu" id="pmmList">`, server-rendered, sin JS) con un
+  link por año (`cne.cl/precio-medio-de-mercado-2/2026-2/`), y esas
+  páginas de año SÍ tienen PDFs directos en `wp-content/uploads` (probado:
+  9 publicaciones reales de 2026, mensuales).
+- **"Precio Nudo Corto Plazo"** (una de las 18, la que preguntó el
+  usuario): las páginas de período
+  (`cne.cl/tarificacion/electrica/precio-nudo-corto-plazo/<periodo>/`,
+  ej. "2026-segundo-semestre") **cargan completamente vacías** para
+  cualquier acceso automatizado -- probado con:
+  - `curl` plano (HTML ya viene con `<div class="single-post-container"
+    ...></div>` vacío, sin JS).
+  - Playwright con JS completo, esperando `networkidle` + 2-3s.
+  - Playwright navegando primero por la página padre (referer real) antes
+    de entrar al período.
+  - Playwright con scroll (por si era lazy-load con IntersectionObserver).
+  - Playwright con medidas anti-detección (`navigator.webdriver`
+    sobrescrito, `--disable-blink-features=AutomationControlled`).
+  - Probado en un período reciente (2024) Y uno de 2005 -- ambos vacíos
+    por igual, así que no es un hueco de contenido nuevo, es sistémico.
+  - No hay ninguna request de red (XHR/fetch/admin-ajax) que traiga el
+    contenido -- se revisó el tráfico completo de red, nada relevante.
+  - El buscador propio del sitio (`cne.cl/?s=...`) tampoco indexa estos
+    documentos.
+  
+  **PERO el usuario, navegando a mano en su propio browser real, SÍ ve el
+  contenido** -- un acordeón "▲ Fijación de Precios de Nudo Segundo
+  Semestre 2026" con varios ítems descargables (Informe Técnico
+  Definitivo, Bases de Cálculo, Precios de Nudo Definitivo, Informe
+  Técnico Preliminar, etc.). Confirmó con capturas de pantalla la URL
+  exacta (`.../precio-nudo-corto-plazo/2026-segundo-semestre/`) -- es la
+  misma que se probó automatizado, y aun así no coincide el resultado.
+  Dos archivos reales que el usuario encontró a mano, para referencia
+  concreta de qué se busca:
+  - `https://www.cne.cl/wp-content/uploads/2026/08/ITD-PNCP-Jul-2026.pdf`
+    (Informe Técnico Definitivo, Precio Nudo Corto Plazo)
+  - `https://www.cne.cl/wp-content/uploads/2026/09/Informe-Final-Estudio-periodo-de-control-de-punta-1.pdf`
+    (otra subcategoría, "Período de Control de Punta" -- mismo problema,
+    ni se investigó el mecanismo todavía)
+
+  **Hipótesis no descartadas, sin verificar:** geobloqueo o bloqueo de IP
+  de datacenter (la VM/este entorno corren desde una IP de nube, no
+  residencial chilena); algún tipo de rate-limiting o desafío anti-bot que
+  no se manifiesta como error HTTP sino como contenido vacío; una cookie o
+  estado de sesión que solo se genera con interacción humana real que
+  Playwright no está replicando aunque parezca idéntico. **Antes de
+  retomar esto, lo más eficiente es pedirle al usuario que abra las
+  DevTools (F12 → Network) en su navegador real mientras carga esa página,
+  y compare qué requests aparecen ahí contra lo que se ve automatizado --
+  eso resolvería la duda en un minuto en vez de seguir adivinando.**
+- Las 16 subcategorías restantes: sin investigar todavía. No asumir que se
+  comportan como ninguna de las dos anteriores.
+
+### Diario Oficial de Chile -- EN INVESTIGACIÓN, con mecanismo entendido
+
+Pedido nuevo: revisar todos los días si hay publicaciones del sector
+eléctrico (CNE, Ministerio de Energía) en la edición electrónica
+(`diariooficial.interior.gob.cl/edicionelectronica/`).
+
+- Cada publicación de cada edición tiene un PDF directo, sin login:
+  `/publicaciones/AAAA/MM/DD/<edición>/<sección>/<CVE>.pdf`. La página de
+  una edición organiza las publicaciones en tablas con un header de
+  Ministerio (`<td class="title4">MINISTERIO DE ENERGÍA</td>`) -- se puede
+  filtrar por ahí directo, con el título completo de cada publicación al
+  lado del link. Probado con la edición real de hoy (44557, 24-09-2026):
+  sección "Ministerio de Energía" con 6 publicaciones reales (nombramientos
+  de SEREMI, esa fecha puntual no tenía nada de la CNE en particular).
+- **El obstáculo**: pedir una edición requiere `date` + `edition` como
+  parámetros, y el servidor devuelve 403 si no coinciden exactamente --
+  no es un cálculo simple de días hábiles (hay feriados, Fiestas Patrias,
+  etc. que se saltan de forma no trivial). El sitio resuelve esto con un
+  datepicker JS propio (`#datep`, jQuery UI). Ya se probó y funciona:
+  seleccionando una fecha en el datepicker con Playwright, devuelve la URL
+  con el par correcto (probado: 24-08-2026 → edición 44532). Una vez que
+  se tiene el par correcto, la descarga posterior funciona con `requests`
+  normal, sin navegador.
+- **Para producción** alcanza con resolver la edición de HOY una vez al
+  día (no hace falta backfill de fechas pasadas para el chequeo diario) --
+  eso sí es un costo bajo y acotado, a diferencia del problema de
+  Tarificación. Falta: revisar `js/do.js` del sitio (no se alcanzó a mirar
+  ese archivo) para ver si el cálculo fecha→edición se puede replicar sin
+  navegador en absoluto, o si hay que aceptar un Playwright liviano una
+  vez al día (medir RAM real antes de asumir que es barato, no dar por
+  sentado que es mucho más liviano que el caso de SharePoint solo porque
+  esta página no tiene visor de PDF -- medirlo).
+
 ## Decisiones de diseño ya tomadas
 
 - **No se guardan PDF ni PPT.** Se descargan transitoriamente solo para
